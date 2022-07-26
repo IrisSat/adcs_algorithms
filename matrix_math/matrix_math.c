@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "matrix_math.h"
+#include "matrix_math/matrix_math.h"
 
 void matmul(int m, int n, int p, float A[m][n], float B[n][p], float C[m][p])
 {

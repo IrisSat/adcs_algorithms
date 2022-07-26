@@ -1,4 +1,4 @@
-//gcc -o main.exe main.c matrix_math.c
+/gcc -o main.exe main.c matrix_math.c
 
 #include <stdio.h>
 #include <stdlib.h>
