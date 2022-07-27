@@ -5,7 +5,8 @@ Windows Users:
     - 1.2 Install MSYS2: https://www.msys2.org/
     - 1.3 Install make: https://sourceforge.net/projects/gnuwin32/
         - http://gnuwin32.sourceforge.net/packages/make.htm
-    - 1.4 Add environment variable: C:\Program Files (x86)\GniWin32\bin
+    - 1.4 Add the following to your Path environment variable: C:\Program Files (x86)\GniWin32\bin
+        - https://docs.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574(v=office.14)
 2. Install the following Visual Studio Code Extensions: https://code.visualstudio.com/docs/editor/extension-marketplace
     - 2.1 C/C++
     - 2.1 Makefile Tools
