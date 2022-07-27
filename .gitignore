@@ -1,2 +1,5 @@
 # Executable files
 *.exe
+
+# .vscode files
+/.vscode/*.log
