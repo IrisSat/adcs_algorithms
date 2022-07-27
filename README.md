@@ -13,8 +13,8 @@ Windows Users:
 3. Set up your project for execution/debugging:
     - 3.1 Open Makefile Tools extenstion (press "Makefile" icon, left column, below explorer, search, run and debug...)
         - **Note: you may have to press F5 on first try (with ADCS.c file open/active) or ctrl+shift+D or "Run and Debug" icon for the Makefile icon to appear (the build will fail)
-    - 3.2 Click "..." icon --> "Makefile: Configure"
+    - 3.2 Press the "..." icon --> "Makefile: Configure"
     - 3.3 Set "Build Target" to "all"
-    - 3.4 Click "Makefile: Build the current target" icon
-    - 3.5 Set "Launch Target" to {project path}\adcs_algorithms?ADCS()
+    - 3.4 Press the "Makefile: Build the current target" icon
+    - 3.5 Set "Launch Target" to {project path}\adcs_algorithms>ADCS()
     - 3.6 Press Debug or Play icon to execute code
