@@ -7,6 +7,11 @@
             "cwd": "c:\\iris\\adcs_algorithms",
             "binaryPath": "c:\\iris\\adcs_algorithms\\ADCS",
             "binaryArgs": []
+        },
+        {
+            "cwd": "c:\\Users\\toidjana\\Documents\\GitHub\\adcs_algorithms",
+            "binaryPath": "c:\\Users\\toidjana\\Documents\\GitHub\\adcs_algorithms\\ADCS",
+            "binaryArgs": []
         }
     ],
 }
