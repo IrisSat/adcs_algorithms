@@ -3,24 +3,148 @@
 
 void Eulers(float *I1, float *I2, float *I3, float *omega, float *T, float *omega_dot );
 void RK4();
+void sun_tranformation(); 
+void EKF();
+
+void Calc_Jacobian(float *I1, float *I2, float *I3, float *height, float *omega, float *S_p);
+void CalcQd(float *I1, float *I2, float *I3, float *w);
+void PredictP();
+void CalcK();
 
 
+//***************************Matrix Math Functions***********************// 
+void matmul(int m, int n, int p, float A[m][n], float B[n][p], float C[m][p]);
+void transpose(int m, int n, float A[][n], float A_T[][m]);
+void addmatrix(int m, int n, float A[][n], float B[][n], float C[][n]);
+void vectorMultiply(int m, int n, float A[m][n], float B[m], float C[m]);
 
+//************************************************************************//
+
+
+// Variables required for Euler's Equations 
 float I1=3.6287e-2; float I2=3.4092e-2; float I3=0.9026e-2; 
 float omega_dot[3];
 float T[3] ={0,0,0};
 float omega[3]={0.01745, 0.001745, 0.001745}; 
 float h=0.1; //Step size (s)
+float height=0.01; 
 
+// Variables required for EKF 
+float w=1e-5; //Assumed process noise 
+//Make this into just actual numbers. 
+float Pk[5][5]={
+ {0.0076154,0,0,0,0}, 
+ {0,0.0076154,0,0,0}, 
+ {0,0,0.0076154,0,0}, 
+ {0,0,0,304.617,0}, 
+ {0,0,0,0,304.617}
+};
 
+float H[5][5]={
+{1,0,0,0,0},
+{0,1,0,0,0},
+{0,0,1,0,0},
+{0,0,0,1,0},
+{0,0,0,0,1}
+};
 
+float R[5][5]={
+{7.61543E-5,0,0,0,0},
+{0,7.61543E-5,0,0,0},
+{0,0,7.61543E-5,0,0},
+{0,0,0,7.61543E-5,0},
+{0,0,0,0,7.61543E-5}
+};
 
+float S_p[2]={0,0};
+float Jacobian_A[5][5]={
+{0,0,0,0,0},
+{0,0,0,0,0},
+{0,0,0,0,0},
+{0,0,0,0,0},
+{0,0,0,0,0}
+};
 
-
+float Qd[5][5];
+int eclipse_flag=0; 
+//when eclipse flag is 1, the spacecraft is in eclipse. 
 
 int main(){
-RK4();
-printf("%E ", omega[0]);
+
+EKF();
+return 0; 
+}
+
+
+void Calc_Jacobian(float *I1, float *I2, float *I3, float *height, float *omega, float *S_p){
+float xp=S_p[0]; float yp=S_p[1]; 
+float w1=omega[0]; float w2=omega[1]; float w3=omega[2]; 
+
+Jacobian_A[0][1]=-((*I3-*I2)/(*I1))*w3;
+Jacobian_A[0][2]=-((*I3-*I2)/(*I1))*w2;
+
+Jacobian_A[1][0]=-((*I1-*I3)/(*I2))*w3; 
+Jacobian_A[1][2]=-((*I1-*I3)/(*I2))*w1; 
+
+Jacobian_A[2][0]=-((*I2-*I1)/(*I3))*w2;
+Jacobian_A[2][1]=-((*I2-*I1)/(*I3))*w1;
+
+Jacobian_A[3][1]=*height; 
+Jacobian_A[3][4]=-w3;
+
+Jacobian_A[4][0]=-*height; 
+Jacobian_A[4][3]=w3; 
+//Jacobian_A[5][5]={
+//{0,   -((*I3-*I2)/(*I1))*w3,  -((*I3-*I2)/(*I1))*w2, 0, 0 },
+//{-((*I1-*I3)/(*I2))*w3,  0,   -((*I1-*I3)/(*I2))*w1, 0, 0 },
+//{-((*I2-*I1)/(*I3))*w2, -((*I2-*I1)/(*I3))*w1, 0,    0, 0 } ,
+//{-yp*xp/(*height),  (*height)+(xp*xp)/(*height),  -yp,  (-yp*w1/(*height))+(2*xp*w2/(*height)), -w3-(xp*w1/(*height))},
+//{-(*height)-(yp*yp/(*height)),     xp*yp/(*height),  xp,  w3+(yp*w2/(*height)), (2*yp*w1)/(*height)+(xp*w2/(*height))}
+//};
+}
+
+
+void CalcQd(float *I1, float *I2, float *I3, float *w){
+	float Bd[5][3]={
+	{1/(*I1), 0, 0},
+	{0, 1/(*I2), 0}, 
+	{0, 0, 1/(*I3)},
+	{0, 0, 0, },
+    {0, 0, 0, }
+	};
+	
+	float W[3][3]={
+	{*w*(*w),0,0},
+	{0,*w*(*w),0},
+	{0,0,*w*(*w)}
+	};
+	
+	float C[5][3];
+	float Bd_Transpose[3][5];
+	matmul(5,3,3,Bd, W, C);
+	transpose(5,3,Bd, Bd_Transpose);
+	matmul(5,3,5,C,Bd_Transpose, Qd);	
+}
+
+void PredictP(){
+	// This function calculates & updates the error covariance (Pk)
+	float C[5][5];
+	float D[5][5];
+    float E[5][5];
+    
+	matmul(5,5,5,Jacobian_A, Pk, C);
+	transpose(5,5, Jacobian_A,D);
+	matmul(5,5,5,C,D,E);
+	addmatrix(5,5,E,Qd,Pk);
+}
+
+void CalcK(){
+	
+//The equation to calculate K simplifies to Pk/(Pk+R) if H is just the identity matrix. 
+float Pk_add_R[5][5]; 
+addmatrix(5, 5, Pk, R, Pk_add_R );
+
+	
 }
 
 
@@ -31,6 +155,47 @@ void Eulers(float *I1, float *I2, float *I3, float *omega, float *T, float *omeg
 //	printf("omegax_dot is \t omegay_dot is \t omegaz_dot is \n ");
 //	printf("%E \t %E \t  %E", omega_dot[0], omega_dot[1], omega_dot[2]);
 }
+
+
+void EKF(){	
+Calc_Jacobian(&I1, &I2, &I3, &height, omega, S_p);
+CalcQd(&I1, &I2, &I3, &w);
+PredictP();
+CalcK(); 
+	
+float True_state[5]={omega[0],omega[1],omega[2],S_p[0],S_p[1]} ;
+float Measured_state[5]={0.0221420309324296, 0.0177486658038343, -0.0179671575114262, 0.369903257448045, -0.380396852672751};
+
+
+// Check for eclipse 
+if (eclipse_flag ==1){
+	H[3][3]=0;
+	H[4][4]=0; 
+}
+
+
+//State updates 
+float Xk[5]; 
+float H_times_True_state[5];
+vectorMultiply(5, 5, H, True_state, H_times_True_state);
+
+float M_minus_T[5]={Measured_state[0]-H_times_True_state[0], Measured_state[1]-H_times_True_state[1],Measured_state[2]-H_times_True_state[2],Measured_state[3]-H_times_True_state[3],Measured_state[4]-H_times_True_state[4] };
+//Multiply K*M_minus_T.
+// Add True_state to product of previous step. 
+}
+
+
+
+
+void sun_transformation(){
+	float Ss[3]={0,0,-1}; float Sx=Ss[0]; float Sy=Ss[1];
+	float height=0.01; 
+	float sqrt=1-powf(Sx,2)-powf(Sy,2);
+	float xp=height*Sx/powf(sqrt, 0.5);
+	float yp=height*Sy/powf(sqrt, 0.5);
+}
+
+
 
 void RK4(){
 	//Evaluating k1 values 
@@ -96,3 +261,93 @@ void RK4(){
 	
 	omega[0]=test1; 
 }
+
+
+
+
+//***************************Matrix Math Functions***********************// 
+void matmul(int m, int n, int p, float A[m][n], float B[n][p], float C[m][p])
+{
+    int i,j,k;
+    for(i=0; i < m; i++){
+        for(j=0; j < p; j++){
+            C[i][j] = 0;
+            for(k=0; k < n; k++){
+                C[i][j] += A[i][k]*B[k][j];
+            }
+        }
+    }
+}
+
+
+void transpose(int m, int n, float A[][n], float A_T[][m])
+{
+    int i,j;
+    for(i=0; i < m; i++){
+        for(j=0; j < n; j++){
+            A_T[j][i] = A[i][j];
+        }
+    }
+}
+
+void addmatrix(int m, int n, float A[][n], float B[][n], float C[][n])
+{
+    int i,j;
+    for(i=0; i < m; i++){
+        for(j=0; j < n; j++){
+            C[j][i] = A[j][i]+B[j][i];
+        }
+    }
+}
+
+void vectorMultiply(int m, int n, float A[m][n], float B[m], float C[m])
+{
+    int i,j;
+    for(i=0; i < m; i++){
+        for(j=0; j < n; j++){
+            C[i] += A[i][j]*B[j];
+            
+        }
+    }
+}
+
+//Random print statments I might need 
+/*
+printf("%E \t %E \t %E \t %E \t %E \n  ", C[0][0], C[0][1], C[0][2], C[0][3],C[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", C[1][0], C[1][1], C[1][2], C[1][3],C[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", C[2][0], C[2][1], C[2][2], C[2][3],C[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", C[3][0], C[3][1], C[3][2], C[3][3],C[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", C[4][0], C[4][1], C[4][2], C[4][3],C[4][4]);/*
+
+printf("Ad is \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[0][0], Jacobian_A[0][1], Jacobian_A[0][2], Jacobian_A[0][3],Jacobian_A[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[1][0], Jacobian_A[1][1], Jacobian_A[1][2], Jacobian_A[1][3],Jacobian_A[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[2][0], Jacobian_A[2][1], Jacobian_A[2][2], Jacobian_A[2][3],Jacobian_A[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[3][0], Jacobian_A[3][1], Jacobian_A[3][2], Jacobian_A[3][3],Jacobian_A[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[4][0], Jacobian_A[4][1], Jacobian_A[4][2], Jacobian_A[4][3],Jacobian_A[4][4]);
+
+
+
+printf("%E \t %E \t %E \n", Qd[0][0], Qd[0][1], Qd[0][2]);
+printf("%E \t %E \t %E \n", Qd[1][0], Qd[1][1], Qd[1][2]);
+printf("%E \t %E \t %E \n",Qd[2][0], Qd[2][1], Qd[2][2]);
+printf("%E \t %E \t %E \n", Qd[3][0], Qd[3][1], Qd[3][2]);
+printf("%E \t %E \t %E \n", Qd[4][0], Qd[4][1], Qd[4][2]);
+
+printf("Pk is \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk[0][0], Pk[0][1], Pk[0][2], Pk[0][3],Pk[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[1][0], Pk[1][1], Pk[1][2], Pk[1][3],Pk[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[2][0], Pk[2][1], Pk[2][2], Pk[2][3],Pk[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[3][0], Pk[3][1], Pk[3][2], Pk[3][3],Pk[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk[4][0], Pk[4][1], Pk[4][2], Pk[4][3],Pk[4][4]);
+
+printf("Pk_add_R is \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[0][0], Pk_add_R[0][1], Pk_add_R[0][2], Pk_add_R[0][3],Pk_add_R[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[1][0], Pk_add_R[1][1], Pk_add_R[1][2], Pk_add_R[1][3],Pk_add_R[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[2][0], Pk_add_R[2][1], Pk_add_R[2][2], Pk_add_R[2][3],Pk_add_R[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[3][0], Pk_add_R[3][1], Pk_add_R[3][2], Pk_add_R[3][3],Pk_add_R[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[4][0], Pk_add_R[4][1], Pk_add_R[4][2], Pk_add_R[4][3],Pk_add_R[4][4]);
+
+*/
+
+
