@@ -14,3 +14,6 @@ void cross_prod(float *a, float *b, float *c);
 /*** Utilities ***/
 void print_vector(int n, float *v);
 void print_matrix(int m, int n, float A[][n]);
+void solve(int m, float A[m][m], float b[m], float x[m]);
+void invert(int m, float A[m][m], float AInv[m][m]);
+void solveInv(int m, float A[m][m], float b[m], float x[m]);
