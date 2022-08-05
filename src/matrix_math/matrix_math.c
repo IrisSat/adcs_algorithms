@@ -211,20 +211,15 @@ void invert(int m, float A[m][m], float AInv[m][m]){
     }
 }
 
-void solveInv(int m, float A[m][m], float b[m], float x[m]){
+void solveInv(int m, float A[m][m], float B[m][m], float X[m][m]){
+    // This solves the equation XA = B which is equivalent to X = B / A in matlab
     float Ainv[m][m];
     invert(m, A, Ainv);
     // Ax = b === x = A^-1 * b
-    float xmat[m][1];
-    float bmat[m][1];
-    for(int i=0; i<m; i++){
-        bmat[i][0] = b[i];
-    }
     
-    matmul(m, m, 1, Ainv, bmat, xmat);
+    
+    matmul(m, m, m, B, Ainv, X);
     //print_matrix(m, 1, xmat);
-    for(int i = 0; i < m; i++){
-        x[i] = xmat[i][0];
-    }
+    
 }
 
