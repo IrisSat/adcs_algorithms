@@ -1,5 +1,5 @@
 #include <stdio.h>
-
+#include <math.h>
 #include "matrix_math.h"
 
 /*** Matrix Math ***/
@@ -81,6 +81,13 @@ void cross_prod(float *a, float *b, float *c)
     c[0] = a[1]*b[2] - a[2]*b[1];
     c[1] = a[2]*b[0] - a[0]*b[2];
     c[2] = a[0]*b[1] - a[1]*b[0];
+}
+
+void norm(float *a, float *normA){
+    double mag = sqrt( (a[0]*a[0]) + (a[1]*a[1]) + (a[2]*a[2]));
+    normA[0] = a[0] / mag;
+    normA[1] = a[1] / mag;
+    normA[2] = a[2] / mag;
 }
 
 

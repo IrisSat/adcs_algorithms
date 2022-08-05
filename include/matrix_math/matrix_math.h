@@ -11,6 +11,8 @@ void vector_mult_scalar(float *v, float mult);
 void vector_div_scalar(float *v, float div);
 void dot_prod(float *a, float *b, float *c);
 void cross_prod(float *a, float *b, float *c);
+void norm(float *a, float *aNorm);
+
 /*** Utilities ***/
 void print_vector(int n, float *v);
 void print_matrix(int m, int n, float A[][n]);
