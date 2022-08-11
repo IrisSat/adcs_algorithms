@@ -10,6 +10,7 @@
 int main(int argc, char ** argv)
 {
     /*** Matrix math ***/
+    /*
     int m = 2;
     int n = 3;
     int p = 2;
@@ -42,7 +43,7 @@ int main(int argc, char ** argv)
     print_matrix(n,m,A_T);
     printf("\n\n");
 
-    /*** Vector math ***/
+    //Vector Math
     float a[3] = {2,3,4};
     float b[3] = {5,6,7};
     printf("*** Vector math ***\n");
@@ -62,7 +63,21 @@ int main(int argc, char ** argv)
     printf("a x b = ");
     print_vector(3,c_cross);
     printf("\n");
+    */
 
-
+    // Linear system solver example
+    float A2[5][5] = {
+        {4, 9, 3, 5, 8},
+        {2, 1, 8, 0, 2},
+        {3, 1, 4, 1, 5},
+        {9, 2, 6, 5, 3},
+        {5, 8, 9, 7, 9}
+    };
+    float b2[5] = {2, 3, 4, 5, 6}; // Technically this should be a column vector for the dims to allign but solve assumes it is already
+    float x2[5]; //soln
+    for(long solves = 0; solves<100000000; solves++){
+        solve(5, A2, b2, x2);
+        //solveInv(5, A2, b2, x2);
+    }
     return 0;
 }
