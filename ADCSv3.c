@@ -10,6 +10,7 @@ void Calc_Jacobian(float *I1, float *I2, float *I3, float *height, float *omega,
 void CalcQd(float *I1, float *I2, float *I3, float *w);
 void PredictP();
 void CalcK();
+void controller(float *EKF_bodyrates, float *EKF_pointing);
 
 
 //***************************Matrix Math Functions***********************// 
@@ -17,7 +18,16 @@ void matmul(int m, int n, int p, float A[m][n], float B[n][p], float C[m][p]);
 void transpose(int m, int n, float A[][n], float A_T[][m]);
 void addmatrix(int m, int n, float A[][n], float B[][n], float C[][n]);
 void vectorMultiply(int m, int n, float A[m][n], float B[m], float C[m]);
+void vector_sub(int m, float *a, float *b, float *c);
+void cross_prod(float *a, float *b, float *c);
+//vector_mult_scalar(float *v, float mult); 
+void vector_add(int m, float *a, float *b, float *c);
 
+void vector_mult_scalar(float *v, float mult)
+{
+    for(int i=0; i < 3; i++)
+        v[i] *= mult;
+}
 //************************************************************************//
 
 
@@ -32,13 +42,13 @@ float height=0.01;
 // Variables required for EKF 
 float w=1e-5; //Assumed process noise 
 //Make this into just actual numbers. 
-float Pk[5][5]={
- {0.0076154,0,0,0,0}, 
- {0,0.0076154,0,0,0}, 
- {0,0,0.0076154,0,0}, 
- {0,0,0,304.617,0}, 
- {0,0,0,0,304.617}
-};
+//float Pk[5][5]={
+// {0.0076154,0,0,0,0}, 
+// {0,0.0076154,0,0,0}, 
+// {0,0,0.0076154,0,0}, 
+// {0,0,0,304.617,0}, 
+// {0,0,0,0,304.617}
+//};
 
 float H[5][5]={
 {1,0,0,0,0},
@@ -173,19 +183,35 @@ if (eclipse_flag ==1){
 	H[4][4]=0; 
 }
 
-
 //State updates 
 float Xk[5]; 
 float H_times_True_state[5];
 vectorMultiply(5, 5, H, True_state, H_times_True_state);
+float M_minus_T[5]; 
+vector_sub(5, Measured_state, H_times_True_state, M_minus_T);
 
-float M_minus_T[5]={Measured_state[0]-H_times_True_state[0], Measured_state[1]-H_times_True_state[1],Measured_state[2]-H_times_True_state[2],Measured_state[3]-H_times_True_state[3],Measured_state[4]-H_times_True_state[4] };
+printf("%E \t %E \t %E \t %E \t %E \n  ", M_minus_T[0], M_minus_T[1], M_minus_T[2], M_minus_T[3],M_minus_T[4]);
+
 //Multiply K*M_minus_T.
 // Add True_state to product of previous step. 
 }
 
+void controller(float *EKF_bodyrates, float *EKF_pointing){
+	//The controller takes in the estimated body rates and sun measurments determined by the EKF.
+	//The controller outputs a command torque
+	float desired_direction[3]={0,0,-1}; 
+	float desired_rate[3]={0.01745329, 0, 0}; 
+	float rate_gain=0.0004; float direction_gain=-0.000005; 
+	float direction_command[3]; float rate_command[3]; 
+	cross_prod(EKF_pointing, desired_direction, direction_command); 
+	vector_sub(3,desired_rate, EKF_bodyrates, rate_command);
+//	vector_mult_scalar(rate_command, rate_gain);
+	//multiplay rate command by a gain
+	//normalize direction_command and multiply by gain 
+	//sum the previous 2 steps = output of controller. 
 
-
+	
+}
 
 void sun_transformation(){
 	float Ss[3]={0,0,-1}; float Sx=Ss[0]; float Sy=Ss[1];
@@ -194,8 +220,6 @@ void sun_transformation(){
 	float xp=height*Sx/powf(sqrt, 0.5);
 	float yp=height*Sy/powf(sqrt, 0.5);
 }
-
-
 
 void RK4(){
 	//Evaluating k1 values 
@@ -262,9 +286,6 @@ void RK4(){
 	omega[0]=test1; 
 }
 
-
-
-
 //***************************Matrix Math Functions***********************// 
 void matmul(int m, int n, int p, float A[m][n], float B[n][p], float C[m][p])
 {
@@ -278,7 +299,6 @@ void matmul(int m, int n, int p, float A[m][n], float B[n][p], float C[m][p])
         }
     }
 }
-
 
 void transpose(int m, int n, float A[][n], float A_T[][m])
 {
@@ -311,6 +331,22 @@ void vectorMultiply(int m, int n, float A[m][n], float B[m], float C[m])
     }
 }
 
+void vector_sub(int m, float *a, float *b, float *c)
+{
+    for(int i=0; i < m; i++)
+        c[i] = a[i]-b[i];
+}
+
+void cross_prod(float *a, float *b, float *c)
+{
+    c[0] = a[1]*b[2] - a[2]*b[1];
+    c[1] = a[2]*b[0] - a[0]*b[2];
+    c[2] = a[0]*b[1] - a[1]*b[0];
+}
+
+
+
+
 //Random print statments I might need 
 /*
 printf("%E \t %E \t %E \t %E \t %E \n  ", C[0][0], C[0][1], C[0][2], C[0][3],C[0][4]);
@@ -325,8 +361,6 @@ printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[1][0], Jacobian_A[1][1], Ja
 printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[2][0], Jacobian_A[2][1], Jacobian_A[2][2], Jacobian_A[2][3],Jacobian_A[2][4]);
 printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[3][0], Jacobian_A[3][1], Jacobian_A[3][2], Jacobian_A[3][3],Jacobian_A[3][4]);
 printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[4][0], Jacobian_A[4][1], Jacobian_A[4][2], Jacobian_A[4][3],Jacobian_A[4][4]);
-
-
 
 printf("%E \t %E \t %E \n", Qd[0][0], Qd[0][1], Qd[0][2]);
 printf("%E \t %E \t %E \n", Qd[1][0], Qd[1][1], Qd[1][2]);
@@ -347,7 +381,61 @@ printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[1][0], Pk_add_R[1][1], Pk_add
 printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[2][0], Pk_add_R[2][1], Pk_add_R[2][2], Pk_add_R[2][3],Pk_add_R[2][4]);
 printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[3][0], Pk_add_R[3][1], Pk_add_R[3][2], Pk_add_R[3][3],Pk_add_R[3][4]);
 printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[4][0], Pk_add_R[4][1], Pk_add_R[4][2], Pk_add_R[4][3],Pk_add_R[4][4]);
-
 */
 
+/*
 
+	//Evaluating k2 values 
+	float state_2[3]; 
+	state_2[0]=omega[0]+h*k1_x/2;
+	state_2[1]=omega[1]+h*k1_y/2;
+	state_2[2]=omega[2]+h*k1_z/2;
+	printf("state_2_x is %E \n", state_2[0]);
+	printf("state_2_y is %E \n", state_2[1]);
+	printf("state_2_z is %E \n", state_2[2]);
+	
+	Eulers(&I1, &I2, &I3, state_2, T, omega_dot);
+    float k2_x=omega_dot[0];
+	float k2_y=omega_dot[1]; 
+	float k2_z=omega_dot[2]; 
+	printf("k2x is \t k2y is \t k2z is \n ");
+	printf("%E \t %E \t  %E \n", k2_x, k2_y, k2_z);
+	
+	//Evaluating k3 values 
+	float state_3[3]; 
+	state_3[0]=omega[0]+h*k2_x/2;
+	state_3[1]=omega[1]+h*k2_y/2;
+	state_3[2]=omega[2]+h*k2_z/2;
+	printf("state_2_x is %E \n", state_3[0]);
+	printf("state_2_y is %E \n", state_3[1]);
+	printf("state_2_z is %E \n", state_3[2]);
+	
+	Eulers(&I1, &I2, &I3, state_3, T, omega_dot);
+    float k3_x=omega_dot[0];
+	float k3_y=omega_dot[1]; 
+	float k3_z=omega_dot[2]; 
+    printf("k3x is \t k3y is \t k3z is \n ");
+	printf("%E \t %E \t  %E \n", k3_x, k3_y, k3_z);
+	
+	//Evaluating k4 values 
+	float state_4[3];
+	state_4[0]=omega[0]+h*k3_x;
+    state_4[1]=omega[1]+h*k3_y;
+    state_4[2]=omega[2]+h*k3_z;
+    Eulers(&I1, &I2, &I3, state_4, T, omega_dot);
+    float k4_x=omega_dot[0];
+    float k4_y=omega_dot[1];
+    float k4_z=omega_dot[2];
+
+    printf("k4x is \t k4y is \t k4z is \n ");
+	printf("%E \t %E \t  %E \n", k4_x, k4_y, k4_z);
+	
+	//Adding it all together 
+	float test1=omega[0]+(k1_x+2*k2_x+2*k3_x+k4_x)*h/6;
+	float test2=omega[1]+(k1_y+2*k2_y+2*k3_y+k4_y)*h/6;
+	float test3=omega[2]+(k1_z+2*k2_z+2*k3_z+k4_z)*h/6;
+	printf("omega_x is now %.8E \n", test1);
+	printf("omega_y is now %.8E \n", test2);
+	printf("omega_z is now %.8E \n", test3);
+	
+ */      
