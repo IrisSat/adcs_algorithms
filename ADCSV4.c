@@ -16,7 +16,7 @@ void DipoleMapping(float *commad_torque, float *B_field, float *command_dipole);
 void saturation(float *command_dipole);
 void sun_transform(float *EKF_planar, int eclipse_flag, int front_panel_flag, float *S_body); 
 void controller(float *bodyrates, float *S_body, float *torque_command);
-void reorient(float *B_field, float *EKF_bodyrates);  
+void reorient(float *B_field, float *command_dipole);
 
 //***************************Matrix Math Functions***********************//  
 //Note I changed some of the functions below from their original version in matrix_math file. 
@@ -73,7 +73,7 @@ controller(EKF_bodyrates, S_body, torque_command);
 
 //Dipole mapping 
 float command_dipole[3];
-float B_field[3]={0.1892, 0.005, -0.013};  //This will be a magnetometer measurment 
+float B_field[3]={0.001, -0.0023, -0.007};  //This will be a magnetometer measurment 
 DipoleMapping(torque_command, B_field, command_dipole); 
 
 //Saturation 
@@ -83,7 +83,29 @@ saturation(command_dipole);
 cross_prod(command_dipole, B_field, T); 
 //printf("T is %.8E %.8E %.8E \n", T[0], T[1],T[2]); 
 
+
+//reorient\plan B 
+
+//reorient(B_field, command_dipole); 
+//printf("command dipole from reorient function is %.8E %.8E %.8E \n", command_dipole[0], command_dipole[1],command_dipole[2]); 
+
 }
+void reorient(float *B_field, float *command_dipole){
+	//Activate this function if the sun sensors have not been able to detect the sun for more than 1 orbit. 
+	float limit=0.1731; 
+    float By=B_field[1]; float Bz=B_field[2]; 
+	
+	command_dipole[0]=limit/2; 
+	command_dipole[1]=limit/2; 
+	command_dipole[2]=command_dipole[1]*Bz/By; 
+	//Hold the command dipole for 10 seconds. 
+	//Activate again if sun is not detected by the sun sensors for more than 1 orbit. 	
+	//Make sure the spacecraft returns to its normal control operations as soon as this is done. 
+	//Nudging the spacecraft this way will cause an increase in the body rates that we will want to control as soon as possible to prevent an unstable spin. 
+}
+
+
+
 
 void controller(float *bodyrates, float *S_body, float *torque_command){
 	//The controller takes in the estimated body rates and sun measurments determined by the EKF.
