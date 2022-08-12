@@ -3,10 +3,6 @@
 #include <math.h>
 #include <stdlib.h>
 
-void Eulers(float *I1, float *I2, float *I3, float *omega, float *T, float *omega_dot );
-
-
-
 void Calc_Jacobian(float *I1, float *I2, float *I3, float *height, float *omega, float *S_p, float Jacobian_A[][5]);
 void CalcQd(float *I1, float *I2, float *I3, float *w, float Qd[][5]);
 void PredictP(float Jacobian_A[][5], float Pk1[][5], float Qd[][5]);
@@ -18,8 +14,12 @@ void calc_omegay_dot(float *I1, float *I2, float *I3, float *omega, float *T, fl
 void calc_omegaz_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegaz_dot );
 void DipoleMapping(float *commad_torque, float *B_field, float *command_dipole);
 void saturation(float *command_dipole);
-void sun_transform(float *EKF_planar, float *S_body, int eclipse_flag, int front_panel_flag); 
-//***************************Matrix Math Functions***********************// 
+void sun_transform(float *EKF_planar, int eclipse_flag, int front_panel_flag, float *S_body); 
+void controller(float *bodyrates, float *S_body, float *torque_command);
+void reorient(float *B_field, float *EKF_bodyrates);  
+
+//***************************Matrix Math Functions***********************//  
+//Note I changed some of the functions below from their original version in matrix_math file. 
 void matmul(int m, int n, int p, float A[m][n], float B[n][p], float C[m][p]);
 void transpose(int m, int n, float A[][n], float A_T[][m]);
 void addmatrix(int m, int n, float A[][n], float B[][n], float C[][n]);
@@ -32,19 +32,19 @@ void solveInv(int m, float A[m][m], float B[m][m], float X[m][m]);
 void dot_prod(float *a, float *b, float *c);
 void vector_mult_scalar(float *v, float mult);
 void vector_div_scalar(float *v, float div); 
-
+void norm(float *a, float *normA);
 //************************************************************************//
 
 // Variables required for Euler's Equations 
 float I1=3.6287e-2; float I2=3.4092e-2; float I3=0.9026e-2; 
 float omega_dot[3];
-float omegax_dot; float omegay_dot; float omegaz_dot; 
+float omegax_dot; float omegay_dot; float omegaz_dot; float torque_command[3]; 
 float T[3] ={0,0,0};
 
 
 int eclipse_flag=0; 
 //when eclipse flag is 1, the spacecraft is in eclipse. 
-int front_panel_flag=0; 
+int front_panel_flag=1; 
 //when front_panel_flag is 1, the front solar panels are facing the sun-should have a current reading. 
 
 
@@ -55,49 +55,57 @@ float omega[3]={0.01745, 0.001745, 0.001745};
 float EKF_state[5]; float EKF_bodyrates[3]; float EKF_planar[2]; 
 
 //From here, start a loop 
-printf("omega is [%.8E %.8E %.8E]\n ", omega[0], omega[1], omega[2] ); 
+//printf("omega is [%.8E %.8E %.8E]\n ", omega[0], omega[1], omega[2] ); 
 RK4(I1, I2, I3, omega, T);
-printf("omega is [%.8E %.8E %.8E]\n ", omega[0], omega[1], omega[2] ); 
+//printf("omega is [%.8E %.8E %.8E]\n ", omega[0], omega[1], omega[2] ); 
 EKF(I1, I2, I3, omega, EKF_state);	
-
 EKF_bodyrates[0]=EKF_state[0]; EKF_bodyrates[1]=EKF_state[1]; EKF_bodyrates[2]=EKF_state[2]; 
 EKF_planar[0]=EKF_state[3]; EKF_planar[1]=EKF_state[4]; 
 
-
-
-
 //Convert planar measurments to sun vector 
-float planar[2]={0.5, 0.2}; 
+float planar[2]={-.1, 0.6}; 
 float S_body[3]; 
-sun_transform(planar, S_body, eclipse_flag, front_panel_flag );
+sun_transform(planar, eclipse_flag, front_panel_flag, S_body);
+//printf("S_body after solar panel check is %f %f %f \n", S_body[0], S_body[1],S_body[2]); 
 
 //Controller 
-
+controller(EKF_bodyrates, S_body, torque_command); 
 
 //Dipole mapping 
 float command_dipole[3];
-float command_torque[3]={6.98e-6, -0.000803, 3.7e-6}; 
-float B_field[3]={0.1892, 0.005, -0.013};
-DipoleMapping(command_torque, B_field, command_dipole); 
+float B_field[3]={0.1892, 0.005, -0.013};  //This will be a magnetometer measurment 
+DipoleMapping(torque_command, B_field, command_dipole); 
 
 //Saturation 
-float A[3]={0.26, 0.036, -1.013};
-saturation(A); 
+saturation(command_dipole); 
+
+//Calculate appplied torque and set equal to T 
+cross_prod(command_dipole, B_field, T); 
+//printf("T is %.8E %.8E %.8E \n", T[0], T[1],T[2]); 
+
 }
 
-void controller(float *EKF_bodyrates, float *EKF_pointing){
+void controller(float *bodyrates, float *S_body, float *torque_command){
 	//The controller takes in the estimated body rates and sun measurments determined by the EKF.
 	//The controller outputs a command torque
-	float desired_direction[3]={0,0,-1}; 
+	float desired_direction[3]={-1,0,0}; 
+		printf("body rates are is %.8E %.8E %.8E \n", bodyrates[0], bodyrates[1], bodyrates[2] );
+
 	float desired_rate[3]={0.01745329, 0, 0}; 
-	float rate_gain=0.0004; float direction_gain=-0.000005; 
-	float direction_command[3]; float rate_command[3]; 
-	cross_prod(EKF_pointing, desired_direction, direction_command); 
-	vector_sub(3,desired_rate, EKF_bodyrates, rate_command);
-//	vector_mult_scalar(rate_command, rate_gain);
-	//multiplay rate command by a gain
-	//normalize direction_command and multiply by gain 
-	//sum the previous 2 steps = output of controller. 
+	float rate_gain=0.0004; float pointing_gain=-0.000005; 
+	float pointing_command[3]; float rate_command[3]; float pointing_cross_prod[3];
+	cross_prod(S_body, desired_direction, pointing_cross_prod); 
+	vector_sub(3,desired_rate, bodyrates, rate_command);
+	printf("body rates are is %.8E %.8E %.8E \n", bodyrates[0], bodyrates[1], bodyrates[2] );
+
+	printf("rate command is %.8E %.8E %.8E \n", rate_command[0], rate_command[1], rate_command[2] );
+
+	vector_mult_scalar(rate_command, rate_gain);          
+	norm(pointing_cross_prod, pointing_command); 
+	vector_mult_scalar(pointing_command, pointing_gain);
+	vector_add(3, rate_command, pointing_command, torque_command);
+	printf("rate command is %.8E %.8E %.8E \n", rate_command[0], rate_command[1], rate_command[2] );
+	printf("Torque command is %.8E %.8E %.8E \n", torque_command[0], torque_command[1], torque_command[2] );
 }
 
 void DipoleMapping(float *commad_torque, float *B_field, float *command_dipole){
@@ -105,11 +113,11 @@ void DipoleMapping(float *commad_torque, float *B_field, float *command_dipole){
 	dot_prod(B_field, B_field, &B_dot); 
 	cross_prod(B_field, commad_torque, command_dipole); 
 	vector_div_scalar(command_dipole, B_dot);
-	printf("m is %.8E %.8E %.8E \n", command_dipole[0], command_dipole[1], command_dipole[2]);
+	//printf("m is %.8E %.8E %.8E \n", command_dipole[0], command_dipole[1], command_dipole[2]);
 }
 
 
-void sun_transform(float *EKF_planar, float *S_body, int eclipse_flag, int front_panel_flag){
+void sun_transform(float *EKF_planar, int eclipse_flag, int front_panel_flag, float *S_body){
 	float xp=EKF_planar[0]; 
 	float yp=EKF_planar[1]; 
 	float height=0.01; 
@@ -119,13 +127,13 @@ void sun_transform(float *EKF_planar, float *S_body, int eclipse_flag, int front
 	}
 	float sy=yp/xp*sx; 
 	float sz=sqrt(1-(sx*sx)-(sy*sy));
-	printf("Sx sy sz is %f %f %f \n", sx, sy,sz); 
+	//printf("Sx sy sz is %f %f %f \n", sx, sy,sz); 
 
 //This is equivalent to a 90 degree 2nd axis rotation. 
 	S_body[0]=sz;
 	S_body[1]=sy;
 	S_body[2]=-sx; 
-	printf("S_body is %f %f %f \n", S_body[0], S_body[1],S_body[2]); 
+	//printf("S_body is %f %f %f \n", S_body[0], S_body[1],S_body[2]); 
 	
 //This is using the solar cell input 
 	if (front_panel_flag ==1){   //if there is sun on the front solar panel 
@@ -134,7 +142,7 @@ void sun_transform(float *EKF_planar, float *S_body, int eclipse_flag, int front
 	if (eclipse_flag == 1){      //if the spacecraft is in eclipse 
 	    S_body[0]=-S_body[0];
     }
-	printf("S_body after solar panel check is %f %f %f \n", S_body[0], S_body[1],S_body[2]); 
+	
 
 }
 
@@ -149,19 +157,17 @@ void saturation(float *command_dipole){
     for (i=0; i<3; i++){
     	if (max < command_dipole_new[i]){
     	    max=command_dipole_new[i];
-    	    printf("max %f \n ", max);
+    	
     	}
 	}	
-	printf("The maximum in the array is %.8E \n", max);
+//	printf("The maximum in the array is %.8E \n", max);
 	
 	if (max>=limit){
 		//If one of the elements in the command dipole array is larger than limit, we scale the whole command dipole vector 
 		//If all elements are smaller, command dipole stays as is. 
 	    vector_mult_scalar(command_dipole, (limit/max));
 	}
-	printf("limit is %f \n", limit); 	printf("max is %f \n", max);
-	printf("scale value is %f \n",(limit/max) );
-	printf("m post saturation is %f %f %f \n", command_dipole[0], command_dipole[1], command_dipole[2]);
+
 
 }
 
@@ -241,11 +247,6 @@ vector_add(5, True_state, K_times_M_minus_T, EKF_state  );
 }
 
 
-void Eulers(float *I1, float *I2, float *I3, float *omega, float *T, float *omega_dot ){
-	omega_dot[0]=(T[0]-(*I3-*I2)*omega[1]*omega[2])/(*I1);
-	omega_dot[1]=(T[1]-(*I1-*I3)*omega[0]*omega[2])/(*I2);
-    omega_dot[2]=(T[2]-(*I2-*I1)*omega[0]*omega[1])/(*I3); 
-}
 
 void calc_omegax_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegax_dot ){
 	*omegax_dot=(T[0]-(*I3-*I2)*omega[1]*omega[2])/(*I1);
@@ -555,4 +556,11 @@ void vector_mult_scalar(float *v, float mult)
 {
     for(int i=0; i < 3; i++)
         v[i] *= mult;
+}
+
+void norm(float *a, float *normA){
+    double mag = sqrt( (a[0]*a[0]) + (a[1]*a[1]) + (a[2]*a[2]));
+    normA[0] = a[0] / mag;
+    normA[1] = a[1] / mag;
+    normA[2] = a[2] / mag;
 }
