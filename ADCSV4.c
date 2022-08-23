@@ -295,11 +295,18 @@ Jacobian_A[1][2]=-((*I1-*I3)/(*I2))*w1;
 Jacobian_A[2][0]=-((*I2-*I1)/(*I3))*w2;
 Jacobian_A[2][1]=-((*I2-*I1)/(*I3))*w1;
 
-Jacobian_A[3][1]=*height; 
-Jacobian_A[3][4]=-w3;
+Jacobian_A[3][0]=-yp*xp/(*height);
+Jacobian_A[3][1]=(*height)+(xp*xp)/(*height); 
+Jacobian_A[3][2]=(-yp*w1/(*height))+(2*xp*w2/(*height));
+Jacobian_A[3][3]=(-yp*w1/h)+(2*xp*w2/h);
+Jacobian_A[3][4]= -w3-(xp*w1/(*height));
 
-Jacobian_A[4][0]=-*height; 
-Jacobian_A[4][3]=w3; 
+Jacobian_A[4][0]=-(*height)-(yp*yp/(*height)); 
+Jacobian_A[4][1]=xp*yp/(*height); 
+Jacobian_A[4][2]=xp;
+Jacobian_A[4][3]=w3+(yp*w2/(*height));
+Jacobian_A[4][4]=(2*yp*w1)/(*height)+(xp*w2/(*height));
+
 //Jacobian_A[5][5]={
 //{0,   -((*I3-*I2)/(*I1))*w3,  -((*I3-*I2)/(*I1))*w2, 0, 0 },
 //{-((*I1-*I3)/(*I2))*w3,  0,   -((*I1-*I3)/(*I2))*w1, 0, 0 },
