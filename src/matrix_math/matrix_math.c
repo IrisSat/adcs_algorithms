@@ -184,10 +184,12 @@ void solve(int m, float A[m][m], float b[m], float x[m]){
 }
 void invert(int m, float A[m][m], float AInv[m][m]){
     int i,j,k,matsize;
+    float Aident[m][m];
     matsize = m;
     float temp;
     for(i=0;i<matsize;i++){                               //automatically initialize the unit matrix, e.g.
-        for(j=0;j<matsize;j++){                            //  -       -
+        for(j=0;j<matsize;j++){   
+            Aident[i][j] = A[i][j];                         //  -       -
             if(i==j)                                        // | 1  0  0 |
                 AInv[i][j]=1;                                  // | 0  1  0 |
             else                                            // | 0  0  1 |
@@ -196,22 +198,22 @@ void invert(int m, float A[m][m], float AInv[m][m]){
     }
     for(k=0;k<matsize;k++)                                  //by some row operations,and the same row operations of
     {                                                       //Unit mat. I gives the inverse of matrix A
-        temp=A[k][k];                   //'temp'  
+        temp=Aident[k][k];                   //'temp'  
         // stores the A[k][k] value so that A[k][k]  will not change
         for(j=0;j<matsize;j++)      //during the operation //A[i] //[j]/=A[k][k]  when i=j=k
         {
-            A[k][j]/=temp;                                  //it performs // the following row operations to make A to unit matrix
+            Aident[k][j]/=temp;                                  //it performs // the following row operations to make A to unit matrix
             AInv[k][j]/=temp;                                  //R0=R0/A[0][0],similarly for I also
                                                             //R0=R0/A[0][0]
         }                                                   //R1=R1-R0*A[1][0] similarly for I
         for(i=0;i<matsize;i++)                              //R2=R2-R0*A[2][0]      ,,
         {
-            temp=A[i][k];                       //R1=R1/A[1][1]
+            temp=Aident[i][k];                       //R1=R1/A[1][1]
             for(j=0;j<matsize;j++)             //R0=R0-R1*A[0][1]
             {                                   //R2=R2-R1*A[2][1]
                 if(i==k)
                     break;                      //R2=R2/A[2][2]
-                A[i][j]-=A[k][j]*temp;          //R0=R0-R2*A[0][2]
+                Aident[i][j]-=Aident[k][j]*temp;          //R0=R0-R2*A[0][2]
                 AInv[i][j]-=AInv[k][j]*temp;          //R1=R1-R2*A[1][2]
             }
         }
