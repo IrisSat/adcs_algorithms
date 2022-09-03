@@ -1,14 +1,14 @@
-// ADCS algorithms Version 4
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
 
 void Calc_Jacobian(float *I1, float *I2, float *I3, float *height, float *omega, float *S_p, float Jacobian_A[][5]);
 void CalcQd(float *I1, float *I2, float *I3, float *w, float Qd[][5]);
-void PredictP(float Jacobian_A[][5], float Pk1[][5], float Qd[][5]);
-void CalcK(float Pk1[][5], float R[][5], float K[][5]); 
+void PredictP(float Jacobian_A[][5], float Pk[][5], float Qd[][5]);
+void CalcK(float Pk[][5], float R[][5], float K[][5], float H[][5]); 
+void CorrectP(float Pk_old[][5], float K[][5], float H[][5], float Pk_corrected[][5]);
 void RK4(float I1, float I2, float I3, float *omega, float *T);
-void EKF(float I1, float I2, float I3, float *omega, float *EKF_state);
+void EKF(float I1, float I2, float I3, float Pk[][5], float *omega, float *EKF_state, float *Gyro_read, float *Sun_read, int eclipse_flag);
 void calc_omegax_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegax_dot );
 void calc_omegay_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegay_dot );
 void calc_omegaz_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegaz_dot );
@@ -23,6 +23,8 @@ void reorient(float *B_field, float *command_dipole);
 void matmul(int m, int n, int p, float A[m][n], float B[n][p], float C[m][p]);
 void transpose(int m, int n, float A[][n], float A_T[][m]);
 void addmatrix(int m, int n, float A[][n], float B[][n], float C[][n]);
+void submatrix(int m, int n, float A[][n], float B[][n], float C[][n]);
+
 void vectorMultiply(int m, int n, float A[m][n], float B[m], float C[m]);
 void vector_sub(int m, float *a, float *b, float *c);
 void cross_prod(float *a, float *b, float *c);
@@ -35,55 +37,79 @@ void vector_div_scalar(float *v, float div);
 void norm(float *a, float *normA);
 //************************************************************************//
 
-// Variables required for Euler's Equations 
-float I1=3.6287e-2; float I2=3.4092e-2; float I3=0.9026e-2; 
-float omega_dot[3];
-float omegax_dot; float omegay_dot; float omegaz_dot; float torque_command[3]; 
-float T[3] ={0,0,0};
 
-
-int eclipse_flag=0; 
-//when eclipse flag is 1, the spacecraft is in eclipse. 
-int front_panel_flag=1; 
-//when front_panel_flag is 1, the front solar panels are facing the sun-should have a current reading. 
 
 
 int main(){
 	
-//Step 1: sample Gyros to obtain a initial rate for integration 
-float omega[3]={0.01745, 0.001745, 0.001745}; 
-float EKF_state[5]; float EKF_bodyrates[3]; float EKF_planar[2]; 
-
-//From here, start a loop 
-//printf("omega is [%.8E %.8E %.8E]\n ", omega[0], omega[1], omega[2] ); 
-RK4(I1, I2, I3, omega, T);
-//printf("omega is [%.8E %.8E %.8E]\n ", omega[0], omega[1], omega[2] ); 
-EKF(I1, I2, I3, omega, EKF_state);	
-EKF_bodyrates[0]=EKF_state[0]; EKF_bodyrates[1]=EKF_state[1]; EKF_bodyrates[2]=EKF_state[2]; 
-EKF_planar[0]=EKF_state[3]; EKF_planar[1]=EKF_state[4]; 
-
-//Convert planar measurments to sun vector 
-float planar[2]={-.1, 0.6}; 
-float S_body[3]; 
-sun_transform(planar, eclipse_flag, front_panel_flag, S_body);
-//printf("S_body after solar panel check is %f %f %f \n", S_body[0], S_body[1],S_body[2]); 
-
-//Controller 
-controller(EKF_bodyrates, S_body, torque_command); 
-
-//Dipole mapping 
-float command_dipole[3];
-float B_field[3]={0.001, -0.0023, -0.007};  //This will be a magnetometer measurment 
-DipoleMapping(torque_command, B_field, command_dipole); 
-
-//Saturation 
-saturation(command_dipole); 
-
-//Calculate appplied torque and set equal to T 
-cross_prod(command_dipole, B_field, T); 
-//printf("T is %.8E %.8E %.8E \n", T[0], T[1],T[2]); 
+	//Initialize variables 
+	float Gyro_read[3]; 
+	float Mag_read[3]; 
+	float Sun_read[2];
+	int eclipse_flag;
+	int front_panel_flag;
+	
+    //During the first iteration, initialize omega to the gyro measurments. 
+	float omega[3]={0.01745, 0.001745, 0.001745}; //These are random numbers but should be gyro readings
+	float EKF_state[5]; 
+	//Initialize EKF_state. The first 3 values get initiated to the same gyro measurments that were used to initiate omega
+	EKF_state[0]=omega[0]; EKF_state[1]=omega[1]; EKF_state[2]=omega[2]; EKF_state[3]=0; EKF_state[4]=0; 
+	float EKF_bodyrates[3]; float EKF_planar[2]; 
+	
+	float I1=3.6287e-2; float I2=3.4092e-2; float I3=0.9026e-2; 
+	
+	//Initial value of Pk
+   	float Pk[5][5]={
+     {0.0076154,0,0,0,0}, 
+     {0,0.0076154,0,0,0}, 
+     {0,0,0.0076154,0,0}, 
+     {0,0,0,304.617,0}, 
+     {0,0,0,0,304.617}
+     };
+      
+    float S_body[3]; //Output variable of Sun_transofrm function 
+    float torque_command[3]; 
+    float command_dipole[3];
+    float T[3] ={0,0,0};
 
 
+	
+for  (;;){
+	
+    //Sample gyros and sun sensors, obtain information about the solar cell currents.  
+     Gyro_read[0]=0.01745;  Gyro_read[1]=0.001745;  Gyro_read[2]=0.001745;     //Sample Gyros 
+     Sun_read[0]=-.1; Sun_read[1]=0.6;                                         //Sample Sunsensors
+	 eclipse_flag=0;                                                           //Check eclipse flag, when eclipse flag is 1, the spacecraft is in eclipse. 
+     front_panel_flag=1;                                                       //Check front panels, when front_panel_flag is 1, the front solar panels are facing the sun-should have a current reading. 
+     
+	  
+      RK4(I1, I2, I3, omega, T);  //Propogates omega ahead of time. Re-writes the omega variable. 
+      
+      EKF(I1, I2, I3, Pk, omega, EKF_state, Gyro_read, Sun_read, eclipse_flag);	
+      EKF_bodyrates[0]=EKF_state[0]; EKF_bodyrates[1]=EKF_state[1]; EKF_bodyrates[2]=EKF_state[2]; 
+      EKF_planar[0]=EKF_state[3]; EKF_planar[1]=EKF_state[4]; 
+
+     //Convert sun sensor measurments from EKF output to sun vector 
+     sun_transform(EKF_planar, eclipse_flag, front_panel_flag, S_body);
+    //printf("S_body after solar panel check is %f %f %f \n", S_body[0], S_body[1],S_body[2]); 
+
+    //Controller 
+     controller(EKF_bodyrates, S_body, torque_command);                       //Calculates the torque command based on the estimated body rates and sun sensor position. 
+
+    //Dipole mapping 
+    Mag_read[0]=0.001; Mag_read[1]=-0.0023; Mag_read[2]=-0.007;               //Sample the magnetometers 
+    DipoleMapping(torque_command, Mag_read, command_dipole);                  //Maps the required torque command to a dipole 
+
+    //Saturation 
+    saturation(command_dipole);                                               //Scales the command dipole. The command_dipole variable gets re-written. 
+
+    //Calculate appplied torque and set equal to T                            //This T gets used in the RK4 in the next iteration. 
+    cross_prod(command_dipole, Mag_read, T); 
+    //printf("T is %.8E %.8E %.8E \n", T[0], T[1],T[2]); 
+
+    //Actuate torque rods with command dipole 
+
+}
 //reorient\plan B 
 
 //reorient(B_field, command_dipole); 
@@ -111,26 +137,21 @@ void controller(float *bodyrates, float *S_body, float *torque_command){
 	//The controller takes in the estimated body rates and sun measurments determined by the EKF.
 	//The controller outputs a command torque
 	float desired_direction[3]={-1,0,0}; 
-		printf("body rates are is %.8E %.8E %.8E \n", bodyrates[0], bodyrates[1], bodyrates[2] );
-
 	float desired_rate[3]={0.01745329, 0, 0}; 
 	float rate_gain=0.0004; float pointing_gain=-0.000005; 
 	float pointing_command[3]; float rate_command[3]; float pointing_cross_prod[3];
+	
 	cross_prod(S_body, desired_direction, pointing_cross_prod); 
 	vector_sub(3,desired_rate, bodyrates, rate_command);
-	printf("body rates are is %.8E %.8E %.8E \n", bodyrates[0], bodyrates[1], bodyrates[2] );
-
-	printf("rate command is %.8E %.8E %.8E \n", rate_command[0], rate_command[1], rate_command[2] );
-
 	vector_mult_scalar(rate_command, rate_gain);          
 	norm(pointing_cross_prod, pointing_command); 
 	vector_mult_scalar(pointing_command, pointing_gain);
 	vector_add(3, rate_command, pointing_command, torque_command);
-	printf("rate command is %.8E %.8E %.8E \n", rate_command[0], rate_command[1], rate_command[2] );
-	printf("Torque command is %.8E %.8E %.8E \n", torque_command[0], torque_command[1], torque_command[2] );
+
 }
 
 void DipoleMapping(float *commad_torque, float *B_field, float *command_dipole){
+	//This function maps the require torque command to a possible dipole based on the magnetic field measurments. 
 	float B_dot=0; 
 	dot_prod(B_field, B_field, &B_dot); 
 	cross_prod(B_field, commad_torque, command_dipole); 
@@ -140,9 +161,10 @@ void DipoleMapping(float *commad_torque, float *B_field, float *command_dipole){
 
 
 void sun_transform(float *EKF_planar, int eclipse_flag, int front_panel_flag, float *S_body){
+	//This function transforms the sun sensor measurment from 2D to a 3D vector. S_body is the 3D vector
 	float xp=EKF_planar[0]; 
 	float yp=EKF_planar[1]; 
-	float height=0.01; 
+	float height=0.01;  //WILL NEED TO UPDATE THIS BASED ON SUN SENSOR DATA SHEET
 	float sx=sqrt(1/(1+(yp*yp)/(xp*xp)+(height*height)/(xp*xp)));  //sx=sqrt(1/(1+yp^2/xp^2+h^2/xp^2));
     if (xp <0){
     	sx=-sx; 
@@ -164,12 +186,11 @@ void sun_transform(float *EKF_planar, int eclipse_flag, int front_panel_flag, fl
 	if (eclipse_flag == 1){      //if the spacecraft is in eclipse 
 	    S_body[0]=-S_body[0];
     }
-	
-
 }
 
 
 void saturation(float *command_dipole){
+	//Scales the command dipole based on the operating range of the rods. command_dipole is rewritten in this funcion. 
 	float limit=0.1731;
 //Take absolute value of command_dipole array 
     float command_dipole_new[3]={fabs(command_dipole[0]), fabs(command_dipole[1]), fabs(command_dipole[2])} ;
@@ -181,31 +202,28 @@ void saturation(float *command_dipole){
     	    max=command_dipole_new[i];
     	
     	}
-	}	
-//	printf("The maximum in the array is %.8E \n", max);
-	
+	}		
 	if (max>=limit){
 		//If one of the elements in the command dipole array is larger than limit, we scale the whole command dipole vector 
 		//If all elements are smaller, command dipole stays as is. 
 	    vector_mult_scalar(command_dipole, (limit/max));
 	}
-
-
 }
 
-void EKF(float I1, float I2, float I3, float *omega, float *EKF_state){
-//Will need to make this take in the true state propogation. 
-// Variables required for EKF 
-float w=1e-5; //Assumed process noise 
-float height=0.01; 
+void EKF(float I1, float I2, float I3, float Pk[][5], float *omega, float *EKF_state, float *Gyro_read, float *Sun_read, int eclipse_flag){
 
-float Pk1[5][5]={
- {0.0076154,0,0,0,0}, 
- {0,0.0076154,0,0,0}, 
- {0,0,0.0076154,0,0}, 
- {0,0,0,304.617,0}, 
- {0,0,0,0,304.617}
-};
+float w=1e-5;        //Assumed process noise 
+float height=0.01;   //WILL NEED TO UPDATE THIS BASED ON SUN SENSOR DATA SHEET
+float Qd[5][5];	
+float K [5][5];
+float S_p[2]={0,0};  
+
+float True_state[5]={omega[0],omega[1],omega[2],S_p[0],S_p[1]} ; 
+//float Measured_state[5]={0.0221420309324296, 0.0177486658038343, -0.0179671575114262, 0.369903257448045, -0.380396852672751}; Used for testing.
+float Measured_state[5]; 
+Measured_state[0]=Gyro_read[0];  Measured_state[1]=Gyro_read[1];  Measured_state[2]=Gyro_read[2];   //Complete this 
+Measured_state[3]=Sun_read[0]; Measured_state[4]=Sun_read[1];
+
 
 float H[5][5]={
 {1,0,0,0,0},
@@ -223,7 +241,6 @@ float R[5][5]={
 {0,0,0,0,7.61543E-5}
 };
 
-float S_p[2]={0,0};
 float Jacobian_A[5][5]={
 {0,0,0,0,0},
 {0,0,0,0,0},
@@ -232,25 +249,62 @@ float Jacobian_A[5][5]={
 {0,0,0,0,0}
 };
 
-float Qd[5][5];	
-float K [5][5];
 
+/*
+//For testing, delete when done. 
+omega[0]=0.01745;
+omega[1]= 0.001745;
+omega[2]=0.001745;
+S_p[0]=0.34185;
+S_p[1]=0.35156;
+*/
 
+//Calc jacobian is calculated based on the latest EKF estimate 
+float body_rates_previous[3]; float sun_previous[2]; 
+body_rates_previous[0]=EKF_state[0]; body_rates_previous[1]=EKF_state[1]; body_rates_previous[2]=EKF_state[2];
+sun_previous[0]=EKF_state[3]; sun_previous[1]=EKF_state[3];
 
-
-Calc_Jacobian(&I1, &I2, &I3, &height, omega, S_p, Jacobian_A);
+Calc_Jacobian(&I1, &I2, &I3, &height, body_rates_previous, sun_previous, Jacobian_A);
 CalcQd(&I1, &I2, &I3, &w, Qd);
-PredictP(Jacobian_A,  Pk1, Qd);
-CalcK(Pk1, R, K);
-
-float True_state[5]={omega[0],omega[1],omega[2],S_p[0],S_p[1]} ; //Move this 
-float Measured_state[5]={0.0221420309324296, 0.0177486658038343, -0.0179671575114262, 0.369903257448045, -0.380396852672751};
-
+PredictP(Jacobian_A,  Pk, Qd);
+/*
+printf("PredictedP \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk[0][0], Pk[0][1], Pk[0][2], Pk[0][3],Pk[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[1][0], Pk[1][1], Pk[1][2], Pk[1][3],Pk[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[2][0], Pk[2][1], Pk[2][2], Pk[2][3],Pk[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[3][0], Pk[3][1], Pk[3][2], Pk[3][3],Pk[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk[4][0], Pk[4][1],Pk[4][2], Pk[4][3],Pk[4][4]);
+*/
 // Check for eclipse 
+
+
 if (eclipse_flag ==1){
 	H[3][3]=0;
 	H[4][4]=0; 
 }
+
+
+CalcK(Pk, R, K, H );
+/*
+printf("K is \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", K[0][0], K[0][1], K[0][2], K[0][3],K[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", K[1][0], K[1][1], K[1][2], K[1][3],K[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", K[2][0], K[2][1], K[2][2], K[2][3],K[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", K[3][0], K[3][1], K[3][2], K[3][3],K[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", K[4][0], K[4][1], K[4][2], K[4][3],K[4][4]);
+*/
+CorrectP(Pk, K, H, Pk);
+
+/*
+printf("Pk_corrected in EKF \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk[0][0], Pk[0][1], Pk[0][2], Pk[0][3],Pk[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[1][0], Pk[1][1], Pk[1][2], Pk[1][3],Pk[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[2][0], Pk[2][1], Pk[2][2], Pk[2][3],Pk[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[3][0], Pk[3][1], Pk[3][2], Pk[3][3],Pk[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk[4][0], Pk[4][1],Pk[4][2], Pk[4][3],Pk[4][4]);	
+*/
+
+
 
 //State updates 
 float H_times_True_state[5];
@@ -260,29 +314,14 @@ float K_times_M_minus_T[5];
 vector_sub(5, Measured_state, H_times_True_state, M_minus_T);
 vectorMultiply(5,5, K, M_minus_T, K_times_M_minus_T );
 vector_add(5, True_state, K_times_M_minus_T, EKF_state  );
-
-
-
-
-//printf("%E \t %E \t %E \t %E \t %E \n  ", Xk[0], Xk[1], Xk[2], Xk[3],Xk[4]);
-	
 }
 
 
 
-void calc_omegax_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegax_dot ){
-	*omegax_dot=(T[0]-(*I3-*I2)*omega[1]*omega[2])/(*I1);
-}
 
-void calc_omegay_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegay_dot ){
-	*omegay_dot=(T[1]-(*I1-*I3)*omega[0]*omega[2])/(*I2);
-}
 
-void calc_omegaz_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegaz_dot ){
-	*omegaz_dot=(T[2]-(*I2-*I1)*omega[0]*omega[1])/(*I3); 
-}
-
-void Calc_Jacobian(float *I1, float *I2, float *I3, float *height, float *omega, float *S_p, float Jacobian_A[][5]){
+void Calc_Jacobian(float *I1, float *I2, float *I3, float *height, float *omega, float *S_p, float Jacobian_A[][5]){	
+//Calculates the Jacobian based on the latest estimate of the state. 
 float xp=S_p[0]; float yp=S_p[1]; 
 float w1=omega[0]; float w2=omega[1]; float w3=omega[2]; 
 
@@ -297,8 +336,8 @@ Jacobian_A[2][1]=-((*I2-*I1)/(*I3))*w1;
 
 Jacobian_A[3][0]=-yp*xp/(*height);
 Jacobian_A[3][1]=(*height)+(xp*xp)/(*height); 
-Jacobian_A[3][2]=(-yp*w1/(*height))+(2*xp*w2/(*height));
-Jacobian_A[3][3]=(-yp*w1/h)+(2*xp*w2/h);
+Jacobian_A[3][2]=-yp;
+Jacobian_A[3][3]=(-yp*w1/(*height))+(2*xp*w2/(*height));
 Jacobian_A[3][4]= -w3-(xp*w1/(*height));
 
 Jacobian_A[4][0]=-(*height)-(yp*yp/(*height)); 
@@ -306,6 +345,15 @@ Jacobian_A[4][1]=xp*yp/(*height);
 Jacobian_A[4][2]=xp;
 Jacobian_A[4][3]=w3+(yp*w2/(*height));
 Jacobian_A[4][4]=(2*yp*w1)/(*height)+(xp*w2/(*height));
+
+/*
+printf("Jacobian_A is \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[0][0], Jacobian_A[0][1], Jacobian_A[0][2], Jacobian_A[0][3],Jacobian_A[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Jacobian_A[1][0], Jacobian_A[1][1], Jacobian_A[1][2], Jacobian_A[1][3],Jacobian_A[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Jacobian_A[2][0], Jacobian_A[2][1], Jacobian_A[2][2], Jacobian_A[2][3],Jacobian_A[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Jacobian_A[3][0], Jacobian_A[3][1], Jacobian_A[3][2], Jacobian_A[3][3],Jacobian_A[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Jacobian_A[4][0], Jacobian_A[4][1], Jacobian_A[4][2],Jacobian_A[4][3],Jacobian_A[4][4]);	
+*/
 
 //Jacobian_A[5][5]={
 //{0,   -((*I3-*I2)/(*I1))*w3,  -((*I3-*I2)/(*I1))*w2, 0, 0 },
@@ -334,42 +382,123 @@ void CalcQd(float *I1, float *I2, float *I3, float *w, float Qd[][5]){
 	
 	float C[5][3];
 	float Bd_Transpose[3][5];
+	
 	matmul(5,3,3,Bd, W, C);
 	transpose(5,3,Bd, Bd_Transpose);
 	matmul(5,3,5,C,Bd_Transpose, Qd);	
 }
 
 
-void PredictP(float Jacobian_A[][5], float Pk1[][5], float Qd[][5]){
+void PredictP(float Jacobian_A[][5], float Pk[][5], float Qd[][5]){
 	// This function calculates & updates the error covariance (Pk)
 	float C[5][5];
 	float D[5][5];
     float E[5][5];
     
-	matmul(5,5,5,Jacobian_A, Pk1, C);
+	matmul(5,5,5,Jacobian_A, Pk, C);
 	transpose(5,5, Jacobian_A,D);
 	matmul(5,5,5,C,D,E);
-	addmatrix(5,5,E,Qd,Pk1);
+	addmatrix(5,5,E,Qd,Pk);
 
 }
 
-void CalcK(float Pk1[][5], float R[][5], float K[][5]){
+void CorrectP(float Pk_old[][5], float K[][5], float H[][5], float Pk_corrected[][5]){
+float I[5][5]={
+{1,0,0,0,0},
+{0,1,0,0,0},
+{0,0,1,0,0},
+{0,0,0,1,0},
+{0,0,0,0,1}
+};
+
+float A[5][5]; 
+float B[5][5]; 
+
+	matmul(5,5,5,K, H, A);
+	submatrix(5,5,I, A, B );
+/*	
+printf("A \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", A[0][0], A[0][1], A[0][2], A[0][3],A[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", A[1][0], A[1][1], A[1][2], A[1][3],A[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", A[2][0], A[2][1], A[2][2], A[2][3],A[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", A[3][0], A[3][1], A[3][2], A[3][3],A[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", A[4][0], A[4][1],A[4][2], A[4][3],A[4][4]);
+*/	
+	matmul(5,5,5,B, Pk_old,Pk_corrected);
+	
+/*	
+printf("Pk_corrected is \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_corrected[0][0], Pk_corrected[0][1], Pk_corrected[0][2], Pk_corrected[0][3],Pk_corrected[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_corrected[1][0], Pk_corrected[1][1], Pk_corrected[1][2], Pk_corrected[1][3],Pk_corrected[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_corrected[2][0], Pk_corrected[2][1], Pk_corrected[2][2], Pk_corrected[2][3],Pk_corrected[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_corrected[3][0], Pk_corrected[3][1], Pk_corrected[3][2], Pk_corrected[3][3],Pk_corrected[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_corrected[4][0], Pk_corrected[4][1],Pk_corrected[4][2], Pk_corrected[4][3],Pk_corrected[4][4]);	*/
+}
+
+
+void CalcK(float Pk[][5], float R[][5], float K[][5], float H[][5]){
 	
 //The equation to calculate K simplifies to Pk/(Pk+R) if H is just the identity matrix. 
 float Pk_add_R[5][5]; 
-addmatrix(5, 5, Pk1, R, Pk_add_R );
-solveInv(5, Pk_add_R, Pk1, K);
+float H_transpose[5][5]; 
+float Pk_times_H_transpose[5][5]; 
+float H_times_Pk_times_H_transpose[5][5]; 
+
+transpose(5,5,H,H_transpose);
+matmul(5,5,5, Pk, H_transpose, Pk_times_H_transpose);
+matmul(5,5,5,H,Pk_times_H_transpose, H_times_Pk_times_H_transpose);
+addmatrix(5, 5, H_times_Pk_times_H_transpose, R, Pk_add_R );
 /*
+ printf("Pk_times_H_transpose \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_times_H_transpose[0][0], Pk_times_H_transpose[0][1], Pk_times_H_transpose[0][2], Pk_times_H_transpose[0][3],Pk_times_H_transpose[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_times_H_transpose[1][0], Pk_times_H_transpose[1][1], Pk_times_H_transpose[1][2], Pk_times_H_transpose[1][3],Pk_times_H_transpose[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_times_H_transpose[2][0], Pk_times_H_transpose[2][1], Pk_times_H_transpose[2][2], Pk_times_H_transpose[2][3],Pk_times_H_transpose[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_times_H_transpose[3][0], Pk_times_H_transpose[3][1], Pk_times_H_transpose[3][2], Pk_times_H_transpose[3][3],Pk_times_H_transpose[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_times_H_transpose[4][0], Pk_times_H_transpose[4][1], Pk_times_H_transpose[4][2], Pk_times_H_transpose[4][3],Pk_times_H_transpose[4][4]);
+
+ printf("Pk_add_R is \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[0][0], Pk_add_R[0][1], Pk_add_R[0][2], Pk_add_R[0][3],Pk_add_R[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_add_R[1][0], Pk_add_R[1][1], Pk_add_R[1][2], Pk_add_R[1][3],Pk_add_R[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_add_R[2][0], Pk_add_R[2][1], Pk_add_R[2][2], Pk_add_R[2][3],Pk_add_R[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk_add_R[3][0], Pk_add_R[3][1], Pk_add_R[3][2], Pk_add_R[3][3],Pk_add_R[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk_add_R[4][0], Pk_add_R[4][1], Pk_add_R[4][2], Pk_add_R[4][3],Pk_add_R[4][4]);	
+solveInv(5, Pk_add_R, Pk_times_H_transpose, K);
+
+/*
+printf("Pk_corrected in EKF \n");
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk[0][0], Pk[0][1], Pk[0][2], Pk[0][3],Pk[0][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[1][0], Pk[1][1], Pk[1][2], Pk[1][3],Pk[1][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[2][0], Pk[2][1], Pk[2][2], Pk[2][3],Pk[2][4]);
+printf("%E \t %E \t %E \t %E \t %E \n ", Pk[3][0], Pk[3][1], Pk[3][2], Pk[3][3],Pk[3][4]);
+printf("%E \t %E \t %E \t %E \t %E \n  ", Pk[4][0], Pk[4][1],Pk[4][2], Pk[4][3],Pk[4][4]);	
+
+
+
+
 printf("K is \n");
 printf("%E \t %E \t %E \t %E \t %E \n  ", K[0][0], K[0][1], K[0][2], K[0][3],K[0][4]);
 printf("%E \t %E \t %E \t %E \t %E \n ", K[1][0], K[1][1], K[1][2], K[1][3],K[1][4]);
 printf("%E \t %E \t %E \t %E \t %E \n ", K[2][0], K[2][1], K[2][2], K[2][3],K[2][4]);
 printf("%E \t %E \t %E \t %E \t %E \n ", K[3][0], K[3][1], K[3][2], K[3][3],K[3][4]);
-printf("%E \t %E \t %E \t %E \t %E \n  ", K[4][0], K[4][1], K[4][2], K[4][3],K[4][4]);	*/
+printf("%E \t %E \t %E \t %E \t %E \n  ", K[4][0], K[4][1], K[4][2], K[4][3],K[4][4]);	
+*/
+}
+
+//Calculate Eulers equations in every axis-used in the RK4 function. 
+void calc_omegax_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegax_dot ){
+	*omegax_dot=(T[0]-(*I3-*I2)*omega[1]*omega[2])/(*I1);
+}
+
+void calc_omegay_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegay_dot ){
+	*omegay_dot=(T[1]-(*I1-*I3)*omega[0]*omega[2])/(*I2);
+}
+
+void calc_omegaz_dot(float *I1, float *I2, float *I3, float *omega, float *T, float *omegaz_dot ){
+	*omegaz_dot=(T[2]-(*I2-*I1)*omega[0]*omega[1])/(*I3); 
 }
 
 void RK4(float I1, float I2, float I3, float *omega, float *T){
-    float h=0.1; //Step size (s)
+    float h=0.1; //Step size (s) //THIS WILL NEED TO BE UPDATED. 
     float omega_dot; float omegax; float omegay; float omegaz; 
     float k1_x; float k2_x; float k3_x; float k4_x;
     float k1_y; float k2_y; float k3_y; float k4_y;
@@ -487,6 +616,17 @@ void addmatrix(int m, int n, float A[][n], float B[][n], float C[][n])
             C[j][i] = A[j][i]+B[j][i];
         }
     }
+  
+}
+
+void submatrix(int m, int n, float A[][n], float B[][n], float C[][n])
+{
+    int i,j;
+    for(i=0; i < m; i++){
+        for(j=0; j < n; j++){
+            C[j][i] = A[j][i]-B[j][i];
+        }
+    }
 }
 
 void vectorMultiply(int m, int n, float A[m][n], float B[m], float C[m])
@@ -559,12 +699,11 @@ void invert(int m, float A[m][m], float AInv[m][m]){
 
 void solveInv(int m, float A[m][m], float B[m][m], float X[m][m]){
     // This solves the equation XA = B which is equivalent to X = B / A in matlab
-    
-    
     float Ainv[m][m];
     invert(m, A, Ainv);
     // Ax = b === x = A^-1 * b
-
+    
+    
     matmul(m, m, m, B, Ainv, X);
     //print_matrix(m, 1, xmat);
     
